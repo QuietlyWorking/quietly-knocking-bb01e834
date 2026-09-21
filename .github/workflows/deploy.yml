@@ -1,0 +1,49 @@
+# Quietly Knocking (QKN) ... push to main => build => Cloudflare Pages `quietly-knocking`.
+# Wired 2026-09-21 as part of the Lovable retirement. Same shape as every other QWF CF Pages app.
+# This repo (quietly-knocking-bb01e834) is the CODE OF RECORD; the unsuffixed `quietly-knocking`
+# repo is a stale Feb-2026 sync and is archived.
+#
+# Secrets (repo Actions secrets):
+#   CLOUDFLARE_API_TOKEN   = the no-IP CI token (CLOUDFLARE_PAGES_CI_TOKEN in the backoffice .env).
+#                            NEVER the IP-locked backoffice token ... GitHub runners get error 10000.
+#   CLOUDFLARE_ACCOUNT_ID
+#   VITE_SUPABASE_ANON_KEY = the QKN Supabase anon key (public by design; it ships in the bundle).
+#
+# VITE_SUPABASE_ANON_KEY is inlined by Vite at build time (src/lib/supabase.ts). Without it the
+# bundle carries the `...placeholder` key and every Supabase call 401s silently ... the first
+# manual CF Pages deploy (2026-09-21 05:10Z) shipped exactly that. CF Pages env vars are
+# runtime-only and never reach a static Vite bundle, so the value has to be set HERE.
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm install  # NOT npm ci (mixed bun/npm lockfiles from the Lovable era)
+      - name: Build
+        env:
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: npm run build
+      - name: Refuse to ship the placeholder anon key
+        run: |
+          if grep -q 'IkpXVCJ9.placeholder' dist/assets/index-*.js; then
+            echo "::error::bundle carries the placeholder Supabase anon key ... VITE_SUPABASE_ANON_KEY secret missing"
+            exit 1
+          fi
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=quietly-knocking --branch=main --commit-hash=${{ github.sha }}
